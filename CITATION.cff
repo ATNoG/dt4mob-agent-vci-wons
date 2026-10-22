@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+title: "Tool-Enforced Determinism for Agentic Traffic Monitoring in a Distributed Mobility Digital Twin"
+message: "If you use this software or dataset, please cite it using the metadata from this file."
+type: software
+authors:
+  - family-names: "Santos"
+    given-names: "Cecília"
+    affiliation: "Universidade de Aveiro / Instituto de Telecomunicações"
+  - family-names: "Antunes"
+    given-names: "Mário"
+    affiliation: "Universidade de Aveiro / Instituto de Telecomunicações"
+repository-code: "https://github.com/ATNoG/dt4mob-agent-vci-wons"
+url: "https://github.com/ATNoG/dt4mob-platform"
+license: MIT
+keywords:
+  - digital twin
+  - agentic AI
+  - large language models
+  - Model Context Protocol
+  - traffic monitoring
+  - intelligent transportation systems
+  - DT4MOB
