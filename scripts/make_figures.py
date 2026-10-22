@@ -40,7 +40,7 @@ def main():
     plt.rcParams.update({"font.size": 8, "font.family": "serif", "axes.spines.top": False,
                          "axes.spines.right": False, "pdf.fonttype": 42})
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7.1, 2.3), gridspec_kw={"width_ratios": [1, 1.15]})
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7.1, 1.55), gridspec_kw={"width_ratios": [1, 1.15]})
     k = kappa(data)
     levels = ["Detector (node)", "Corridor", "Network (overall)"]
     x = np.arange(len(levels))

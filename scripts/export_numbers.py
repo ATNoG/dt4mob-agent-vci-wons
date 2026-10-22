@@ -29,6 +29,12 @@ def num(s):
     return float(m.group(1)) if m else None
 
 
+def paren_num(s):
+    """Numeric token inside parentheses such as '162 (0.0771)' -> 0.0771."""
+    m = re.search(r"\((-?\d+(?:\.\d+)?)\)", s)
+    return float(m.group(1)) if m else num(s)
+
+
 class Out:
     def __init__(self):
         self.lines = []
@@ -78,13 +84,14 @@ def main():
         ("CovMean", ("Prediction coverage", "mean coverage vs classic"), 1, True),
         ("SmapeClassic", ("Forecast accuracy vs observed", "mean SMAPE classic"), 4, False),
         ("SmapeAgent", ("Forecast accuracy vs observed", "mean SMAPE agent"), 4, False),
-        ("WrongPayload", ("Input correctness", "calls with a wrong payload"), 1, False),
         ("ExactMatch", ("Prediction agreement", "exact match (|diff| <= tol)"), 1, True),
         ("EvalCov", ("Evaluation correctness", "mean evaluation coverage vs classic"), 1, True),
         ("RunSummaryMatch", ("Evaluation correctness", "run-summary counts match classic"), 1, True),
     ]:
         for m, cell in zip(MODELS, fid[key]):
             o.fmt(f"Res{tag}{m}", num(cell), nd, pct)
+    for m, cell in zip(MODELS, fid[("Input correctness", "calls with a wrong payload")]):
+        o.fmt(f"ResWrongPayload{m}", paren_num(cell), 1, True)
     for tag, key in [
         ("Sessions", ("Sessions", "agent sessions run")),
         ("Completed", ("Sessions", "completed (run summary + final Ditto logged)")),
@@ -113,6 +120,8 @@ def main():
     for lvl, tag in [("Detector (node)", "Node"), ("Corridor", "Cor"), ("Network (overall)", "Net")]:
         for m, cell in zip(MODELS, ag[(lvl, "Cohen's kappa")]):
             o.fmt(f"Kappa{tag}{m}", num(cell), 2)
+        for m, cell in zip(MODELS, ag[(lvl, "Cohen's kappa excluding trivial pending")]):
+            o.fmt(f"KappaNoPend{tag}{m}", num(cell), 2)
         for m, cell in zip(MODELS, ag[(lvl, "raw agreement")]):
             o.fmt(f"Agree{tag}{m}", num(cell), 1, True)
         for m, cell in zip(MODELS, ag[(lvl, "rows compared")]):
@@ -128,6 +137,18 @@ def main():
     for lvl, tag in [("Detector (node)", "Node"), ("Corridor", "Cor"), ("Network (overall)", "Net")]:
         for m, cell in zip(MODELS, ag[(lvl, "macro_drift: classic count / recall / precision")]):
             o.intn(f"DriftCount{tag}{m}", float(cell.split("/")[0]))
+    dp_q = {(r[0], r[1]): float(r[2]) for r in rows(D / "3_disagreement_pairs_Qwen.csv")[1:]}
+    dp_g = {(r[0], r[1]): float(r[2]) for r in rows(D / "3_disagreement_pairs_Gemma.csv")[1:]}
+    o.intn("ConfBaseToPendQ", dp_q[("within_baseline", "pending")])
+    o.intn("ConfLocToPendQ", dp_q[("localized_event", "pending")])
+    o.intn("ConfBaseToPendG", dp_g[("within_baseline", "pending")])
+    o.intn("ConfBaseToMissG", dp_g[("within_baseline", "not_reported")])
+    o.intn("ConfLocToMissG", dp_g[("localized_event", "not_reported")])
+    malformed_g = sum(v for (k1, k2), v in dp_g.items() if "'" in k2)
+    o.intn("ConfMalformedG", malformed_g)
+    o.intn("ResNoCorridorG", num(fid[("Sessions", "build_summary_table succeeded for no corridor")][0]))
+    o.intn("ResOneCorridorG", num(fid[("Sessions", "agent sessions run")][0]) - num(fid[("Sessions", "build_summary_table succeeded for both corridors")][0]) - num(fid[("Sessions", "build_summary_table succeeded for no corridor")][0]))
+    o.intn("TrivPendNode", num(ag[("Detector (node)", "rows compared")][0]) - num(ag[("Detector (node)", "rows excluding trivial pending")][0]))
 
     # --- failures (3_failure_summary) ---
     fs = by_index(D / "3_failure_summary.csv")
@@ -159,7 +180,24 @@ def main():
                    "different verdict although inputs matched": "RuleDiff", "session had wrong check_deviation": "BadArgs"}
             for k, t in tag.items():
                 if r[0].startswith(k):
+                    o.intn(f"CauseN{t}{m}", float(r[1]))
                     o.fmt(f"Cause{t}{m}", float(r[2]), 1, True)
+
+    # --- payload issues & tool errors ---
+    pi_g = {r[0]: float(r[1]) for r in rows(D / "3_payload_issues_Gemma.csv")[1:]}
+    pi_q = {r[0]: float(r[1]) for r in rows(D / "3_payload_issues_Qwen.csv")[1:]}
+    o.intn("PayMissPrecipG", pi_g["missing_field:precipitation"])
+    o.intn("PayMissLagDayG", pi_g["missing_field:flows_24"])
+    o.intn("PayWrongTsG", pi_g["wrong_timestamp"])
+    o.intn("PayWrongLagDayQ", pi_q["wrong_value:flows_24"])
+    o.intn("PayWrongLagWeekQ", pi_q["wrong_value:flows_168"])
+    o.intn("PayWrongLagHourQ", pi_q["wrong_value:flows_1"])
+    te_g = {r[0]: float(r[2]) for r in rows(D / "3_tool_errors_Gemma.csv")[1:]}
+    te_q = {r[0]: float(r[2]) for r in rows(D / "3_tool_errors_Qwen.csv")[1:]}
+    o.intn("ToolErrPredictG", te_g["baseline_predict"])
+    o.intn("ToolErrPredictQ", te_q["baseline_predict"])
+    o.intn("ToolErrFlowsQ", te_q["get_flows"])
+    o.intn("ToolErrPendingQ", te_q["get_pending_prediction"])
 
     # --- execution time (4_*) ---
     et = {r[0]: r[1:] for r in rows(D / "4_execution_time.csv")[1:]}
@@ -215,19 +253,38 @@ def main():
     # --- cost (6_cost): rows keyed by model, scenario, provider ---
     cost = rows(D / "6_cost.csv")
     ch = cost[0]
+    scen_map = {"observed": "Obs", "runaways removed": "NoRun", "output capped at 4096": "Cap"}
     for r in cost[1:]:
-        if r[1] != "observed" or r[0] != r[2]:
-            continue
         m = "G" if r[0] == "Gemma" else "Q"
-        o.fmt(f"CostRunApi{m}", float(r[ch.index("API cost per run (USD)")]), 4)
-        o.intn(f"CostFiveApi{m}", float(r[ch.index("API cost, 5 years (USD)")]))
-        o.intn(f"CostFiveLocal{m}", float(r[ch.index("local cost, 5 years (USD)")]))
-        o.fmt(f"CostRunLocal{m}", float(r[ch.index("local cost per run (USD)")]), 3)
-        o.fmt(f"BreakEvenYears{m}", float(r[ch.index("break-even (years at 1 run/hour)")]), 1)
+        sc = scen_map[r[1]]
+        pr = "G" if r[2] == "Gemma" else "Q"
+        if r[0] == r[2]:
+            o.fmt(f"CostRunApi{sc}{m}", float(r[ch.index("API cost per run (USD)")]), 4)
+            o.intn(f"CostFiveApi{sc}{m}", float(r[ch.index("API cost, 5 years (USD)")]))
+            o.fmt(f"BreakEven{sc}{m}", float(r[ch.index("break-even (years at 1 run/hour)")]), 1)
+        if r[1] == "observed" and r[0] == r[2]:
+            o.fmt(f"CostRunApi{m}", float(r[ch.index("API cost per run (USD)")]), 4)
+            o.intn(f"CostFiveApi{m}", float(r[ch.index("API cost, 5 years (USD)")]))
+            o.intn(f"CostFiveLocal{m}", float(r[ch.index("local cost, 5 years (USD)")]))
+            o.fmt(f"CostRunLocal{m}", float(r[ch.index("local cost per run (USD)")]), 3)
+            o.fmt(f"BreakEvenYears{m}", float(r[ch.index("break-even (years at 1 run/hour)")]), 1)
+        o.intn(f"CostCrossFive{sc}{m}at{pr}", float(r[ch.index("API cost, 5 years (USD)")]))
+        o.fmt(f"BreakEvenCross{sc}{m}at{pr}", float(r[ch.index("break-even (years at 1 run/hour)")]), 1)
     be = [float(r[cost[0].index("break-even (years at 1 run/hour)")]) for r in cost[1:]]
     o.fmt("BreakEvenMin", min(be), 1)
     o.fmt("BreakEvenMax", max(be), 1)
     o.intn("CostRunsFiveYears", 24 * 365 * 5)
+
+    # --- tokens (6_tokens) ---
+    tok = rows(D / "6_tokens.csv")
+    th = tok[0]
+    for r in tok[1:]:
+        m = "G" if r[0] == "Gemma" else "Q"
+        sc = scen_map[r[1]]
+        o.intn(f"TokInRun{sc}{m}", float(r[th.index("input tokens / run")]))
+        o.intn(f"TokOutRun{sc}{m}", float(r[th.index("output tokens / run")]))
+        o.fmt(f"TokInFiveM{sc}{m}", float(r[th.index("input tokens, 5 years (millions)")]), 1)
+        o.fmt(f"TokOutFiveM{sc}{m}", float(r[th.index("output tokens, 5 years (millions)")]), 1)
 
     # --- forecasting (forecast_test.csv, transcribed from the dissertation) ---
     for r in rows(D / "forecast_test.csv")[1:]:
